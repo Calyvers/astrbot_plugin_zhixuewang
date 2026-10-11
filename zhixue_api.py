@@ -340,6 +340,20 @@ class StudentAccount:
         total_raw = result.get("totalScore")
         return papers, total_raw
 
+    def get_rank_report(self, exam: Exam) -> dict:
+        """Read explicit ranks from the web report; never infer ranks from percentiles."""
+        headers = self._get_auth_header()
+        r = self._session.get(
+            "https://ali-bg.zhixue.com/zxbReport/report/exam/getReportMain",
+            params={"examId": exam.id, "token": self._auth_token},
+            headers=headers, timeout=30,
+        )
+        r.raise_for_status()
+        data = r.json()
+        if data.get("errorCode") != 0 or not isinstance(data.get("result"), dict):
+            raise RuntimeError("排名接口未返回有效报告（错误码：%s）" % data.get("errorCode"))
+        return data["result"]
+
     @staticmethod
     def _parse_sheet_result(result: dict) -> dict | None:
         """解析 checksheet/getCheckSheet 的 result 为统一 payload，无答题卡时返回 None."""

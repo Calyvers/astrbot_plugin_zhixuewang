@@ -118,3 +118,10 @@ astrbot_plugin_zhixuewang/
 ## 许可
 
 作者：JerryPig678
+
+### 排名查询
+
+- `/zx ranks`：最近一次考试的班级、年级排名。
+- `/zx ranks 01` 或 `/zx ranks 考试名称`：选择考试，沿用 marks 的序号与名称解析。
+- `/zx ranks all 01`：显式全科别名；默认也包括未扫描科目，与 marks 范围一致。
+- 仅读取接口明确返回的 `clazzRank` / `gradeRank`，不根据百分位推算；缺失或无效排名显示“无排名”。图片渲染失败自动降级为文本。

@@ -1,4 +1,5 @@
 import asyncio
+from astrbot.core.star.filter.command import GreedyStr
 
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star
@@ -14,6 +15,8 @@ from .zhixue_core import (
     format_exam_date,
     format_exams_table,
     format_marks_table,
+    format_ranks_table,
+    parse_ranks_args,
     format_homeworks_table,
 )
 
@@ -245,6 +248,7 @@ class ZhiXuePlugin(Star):
             "  /zx bind <用户名>    - 绑定智学网账号\n"
             "  /zx exams [all]      - 查看考试列表，默认本学年，all 查看全部\n"
             "  /zx marks [序号/名称] - 查看成绩\n"
+            "  /zx ranks [all] [序号/名称] - 查看排名，all 显示当次全部科目\n"
             "  /zx sheet <学科> [考试] - 查看答题卡(带批改标注长图)\n"
             "  /zx hw list [all]    - 查看手阅作业列表，all 查看全部\n"
             "  /zx hw marks [序号/名称] - 查看作业成绩\n"
@@ -357,6 +361,30 @@ class ZhiXuePlugin(Star):
             yield event.plain_result(str(e))
         except Exception as e:
             yield event.plain_result(f"查询失败: {e}")
+
+    @zx.command("ranks")
+    async def zx_ranks(self, event: AstrMessageEvent, query: GreedyStr):
+        """查询排名，支持 ranks all <考试序号或名称>。"""
+        exam_param, show_all = parse_ranks_args(query)
+        yield event.plain_result("正在查询排名...")
+        try:
+            user_name, exam_info, subjects = await zhixue_manager.get_ranks(
+                event.get_sender_id(), self.config.get("users", []), exam_param, show_all
+            )
+            ename = exam_info["name"]
+            try:
+                url = await self._render_image(RANKS_TMPL, {
+                    "student_name": user_name, "exam_name": ename, "subjects": subjects,
+                })
+                yield event.image_result(url)
+            except Exception:
+                logger.warning("排名图片渲染失败，降级纯文本")
+                yield event.plain_result(format_ranks_table(user_name, ename, subjects))
+        except ValueError as e:
+            yield event.plain_result(str(e))
+        except Exception:
+            logger.warning("排名查询失败")
+            yield event.plain_result("排名查询失败，请稍后重试；未使用估算名次。")
 
     @zx.command("sheet")
     async def zx_sheet(self, event: AstrMessageEvent, subject_name: str, exam_param: str = None):
@@ -761,3 +789,9 @@ class ZhiXuePlugin(Star):
         except Exception as e:
             logger.warning(f"zhixue_query_homework_sheet 失败: {e}", exc_info=True)
             return f"查询作业答题卡失败: {e}"
+
+
+RANKS_TMPL = """<!doctype html><html><head><style>
+body{width:480px;box-sizing:border-box;padding:28px;background:#fff;color:#222;font:15px sans-serif}h2{margin:0 0 12px}p{line-height:1.6;color:#555}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 4px;border-bottom:1px solid #eee}small{color:#777}
+</style></head><body><h2>{{ student_name | e }} · 排名</h2><p>{{ exam_name | e }}</p><table><tr><th>科目</th><th>班级排名</th><th>年级排名</th></tr>
+{% for s in subjects %}<tr><td>{{ s.subject | e }}{% if s.status_labels %}<br><small>{{ s.status_labels | join('、') | e }}</small>{% endif %}</td><td>{{ s.class_rank or '无排名' }}</td><td>{{ s.grade_rank or '无排名' }}</td></tr>{% else %}<tr><td colspan="3">该考试暂无科目排名数据</td></tr>{% endfor %}</table></body></html>"""
