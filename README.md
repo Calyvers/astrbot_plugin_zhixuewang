@@ -9,12 +9,28 @@ AstrBot 插件，接入智学网成绩查询系统。支持 QQ/微信等多平�
 | 功能 | 说明 |
 |------|------|
 | 成绩查询 | `/zx marks [序号/名称]` — 图片渲染，序号 1=最新 |
+| 排名查询 | `/zx ranks [all] [序号/名称]` — 班级、年级排名，图片渲染（见下） |
 | 考试列表 | `/zx exams [all]` — 图片渲染，默认本学年，all 查看全部 |
 | **答题卡批改标注** | `/zx sheet <学科> [考试]` — 渲染批改标注长图（见下） |
 | 账号绑定 | `/zx bind <用户名>` — 一个智学网账号可绑定多个平台用户 |
 | 成绩监听 | `/zx watch on [间隔]\|off` — 自动轮询，新成绩+新作业推送到私聊+群组 |
 | **手阅作业** | `/zx hw list [all]`、`/zx hw marks`、`/zx hw sheet` — 查询手阅作业（见下） |
-| LLM 工具 | AI 可通过工具调用查询成绩和答题卡（需绑定账号） |
+| LLM 工具 | AI 可通过工具调用查询成绩、排名和答题卡（需绑定账号） |
+
+## 排名查询
+
+`/zx ranks` 查询最近一次考试的班级、年级排名，用法与成绩查询一致：
+
+| 命令 | 说明 |
+|------|------|
+| `/zx ranks` | 最近一次考试的各科排名 |
+| `/zx ranks <序号/考试名>` | 指定考试，支持序号和名称模糊匹配 |
+| `/zx ranks all [序号/考试名]` | 显式全科查询，默认查询也包含未扫描科目 |
+
+- 考试序号与 `/zx marks` 一致，从 1 开始（1 = 最新），如 `/zx ranks 01`
+- 使用独立排名接口，仅读取服务端返回的班级排名 `clazzRank` 和年级排名 `gradeRank`，不根据百分位估算
+- 缺失或无效排名显示“无排名”，未扫描科目保留相应状态标签
+- 排名表格以图片发送，渲染失败自动降级为纯文本
 
 ## 答题卡批改标注渲染
 
@@ -78,10 +94,11 @@ UMO 格式示例：`aiocqhttp:GroupMessage:123456`
 
 ## LLM 工具
 
-插件注册了六个工具供 AI 调用：
+插件注册了七个工具供 AI 调用：
 
 * `zhixue_list_exams(user_id)` — 获取考试列表
 * `zhixue_query_score(user_id, exam_name)` — 查询成绩
+* `zhixue_query_ranks(user_id, exam_name)` — 查询班级、年级排名（省略考试名则查询最新考试）
 * `zhixue_query_sheet(user_id, subject_name, exam_name)` — 查询答题卡（直接发图）
 * `zhixue_list_homeworks(user_id)` — 获取手阅作业列表
 * `zhixue_query_homework_score(user_id, homework_name)` — 查询作业成绩
@@ -94,9 +111,11 @@ UMO 格式示例：`aiocqhttp:GroupMessage:123456`
 ```
 astrbot_plugin_zhixuewang/
 ├── main.py              # AstrBot 插件入口（命令、LLM 工具、监听）
-├── zhixue_core.py       # 核心逻辑（绑定、缓存、成绩格式化）
-├── zhixue_api.py        # 智学网 API 客户端
+├── zhixue_core.py       # 核心逻辑（绑定、缓存、成绩查询）
+├── zhixue_api.py        # 智学网 API 客户端（成绩、排名、作业、答题卡）
 ├── answer_sheet.py      # 答题卡批注渲染（PIL）
+├── zhixue_ranks.py      # 排名查询（API调用、解析与格式化）
+├── font_assets.py       # HTML 系统备用字体样式
 ├── plugin_login.py      # 纯 HTTP 登录（极验 v4 滑块）
 ├── geeked/              # 极验验证码求解
 ├── _conf_schema.json    # AstrBot 配置 Schema
@@ -118,10 +137,3 @@ astrbot_plugin_zhixuewang/
 ## 许可
 
 作者：JerryPig678
-
-### 排名查询
-
-- `/zx ranks`：最近一次考试的班级、年级排名。
-- `/zx ranks 01` 或 `/zx ranks 考试名称`：选择考试，沿用 marks 的序号与名称解析。
-- `/zx ranks all 01`：显式全科别名；默认也包括未扫描科目，与 marks 范围一致。
-- 仅读取接口明确返回的 `clazzRank` / `gradeRank`，不根据百分位推算；缺失或无效排名显示“无排名”。图片渲染失败自动降级为文本。

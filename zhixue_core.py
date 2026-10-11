@@ -6,6 +6,7 @@ import os
 import time
 
 from .zhixue_api import login_cookie
+from .zhixue_ranks import get_ranks as query_ranks, valid_rank, parse_ranks_args, format_ranks_table
 
 logger = logging.getLogger(__name__)
 
@@ -368,30 +369,8 @@ class ZhiXueManager:
         return user_name, exam_info, subjects, total_info
 
     async def get_ranks(self, user_id: str, config_users: list, exam_param: str = None, show_all: bool = False):
-        account, _ = await self.get_account(user_id, config_users)
-        exam = self._resolve_exam_or_latest(account, exam_param)
-        report = account.get_rank_report(exam)
-        subjects = []
-        seen = set()
-        # marks includes both published and absent papers; keep its default scope.
-        for paper in (report.get("paperList") or []) + (report.get("absentPaperList") or []):
-            key = paper.get("paperId") or paper.get("subjectCode") or paper.get("subjectName")
-            if key in seen:
-                continue
-            seen.add(key)
-            subjects.append({
-                "subject": paper.get("subjectName", "未知科目"),
-                "class_rank": valid_rank(paper.get("clazzRank")),
-                "grade_rank": valid_rank(paper.get("gradeRank")),
-                "status_labels": [x["labelName"] for x in (paper.get("subjectLabels") or [])
-                                  if isinstance(x, dict) and isinstance(x.get("labelName"), str)],
-            })
-        total = report.get("totalScore")
-        if isinstance(total, dict) and (valid_rank(total.get("clazzRank")) or valid_rank(total.get("gradeRank"))):
-            subjects.append({"subject": total.get("subjectName", "总分"),
-                             "class_rank": valid_rank(total.get("clazzRank")),
-                             "grade_rank": valid_rank(total.get("gradeRank")), "status_labels": []})
-        return account.name, {"name": exam.name, "id": exam.id}, subjects
+        """Compatibility entry point delegating to the production rank module."""
+        return await query_ranks(self, user_id, config_users, exam_param, show_all)
 
     async def get_sheet(self, user_id: str, config_users: list, subject_name: str, exam_param: str = None) -> tuple[str, list[str]]:
         """获取答题卡图片临时文件路径。返回 (sheet_name, [path1, path2, ...])。"""
@@ -731,31 +710,4 @@ def format_homeworks_table(hws: list, show_all: bool = False) -> str:
     if not show_all and len(hws) > 10:
         lines.append("发送 /zx hw list all 查看全部")
     lines.append("发送 /zx hw marks <序号或作业名> 查询作业成绩")
-    return "\n".join(lines)
-
-
-def valid_rank(value):
-    if isinstance(value, bool):
-        return None
-    try:
-        n = float(value)
-        return int(n) if n > 0 and n.is_integer() else None
-    except (TypeError, ValueError, OverflowError):
-        return None
-
-
-def parse_ranks_args(text):
-    parts = (text or "").strip().split(maxsplit=1)
-    if parts and parts[0].lower() == "all":
-        return (parts[1].strip() if len(parts) > 1 else None), True
-    return ((text or "").strip() or None), False
-
-
-def format_ranks_table(user_name, exam_name, subjects):
-    lines = [f"{user_name} · 排名", exam_name, "科目 | 班级排名 | 年级排名"]
-    for s in subjects:
-        label = "、".join(s.get("status_labels") or [])
-        lines.append(f"{s['subject']} | {s.get('class_rank') or '无排名'} | {s.get('grade_rank') or '无排名'}" + (f"（{label}）" if label else ""))
-    if not subjects:
-        lines.append("该考试暂无科目排名数据")
     return "\n".join(lines)

@@ -1,4 +1,5 @@
 import asyncio
+from .font_assets import embed_fonts
 from astrbot.core.star.filter.command import GreedyStr
 
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
@@ -15,10 +16,9 @@ from .zhixue_core import (
     format_exam_date,
     format_exams_table,
     format_marks_table,
-    format_ranks_table,
-    parse_ranks_args,
     format_homeworks_table,
 )
+from .zhixue_ranks import format_ranks_table, parse_ranks_args
 
 # ---------------------------------------------------------------------------
 # HTML templates — black/white minimalist pixel style
@@ -287,7 +287,7 @@ class ZhiXuePlugin(Star):
     async def _render_image(self, template: str, data: dict) -> str:
         """Render HTML template to image with proper viewport settings."""
         return await self.html_render(
-            template,
+            embed_fonts(template),
             data,
             options={
                 "quality": 95,
@@ -650,6 +650,29 @@ class ZhiXuePlugin(Star):
             return str(e)
         except Exception as e:
             return f"查询失败: {e}"
+
+    @filter.llm_tool(name="zhixue_query_ranks")
+    async def llm_query_ranks(self, event: AstrMessageEvent, user_id: str, exam_name: str = "") -> str:
+        '''查询学生考试的班级、年级排名，使用独立排名接口，不使用成绩查询附带的排名或估算名次。查询前先调用 zhixue_list_exams 获取准确考试名称。
+
+        Args:
+            user_id(string): 要查询的用户ID。从上下文 user_context 获取：查自己用发送者ID，查别人用被@用户的ID
+            exam_name(string): 考试名称关键词或序号，支持模糊匹配。不传则查询最新考试
+        '''
+        try:
+            config_users = self.config.get("users", [])
+            accounts = load_accounts(config_users)
+            if not find_username_by_id(accounts, user_id):
+                return f"用户 {user_id} 未绑定智学网账号，请先使用 /zx bind 绑定"
+            user_name, exam_info, subjects = await zhixue_manager.get_ranks(
+                user_id, config_users, exam_name.strip() or None
+            )
+            return format_ranks_table(user_name, exam_info.get("name", "最新考试"), subjects)
+        except ValueError as e:
+            return str(e)
+        except Exception:
+            logger.warning("zhixue_query_ranks 查询失败")
+            return "排名查询失败，请稍后重试；未使用估算名次。"
 
     @filter.llm_tool(name="zhixue_query_sheet")
     async def llm_query_sheet(self, event: AstrMessageEvent, user_id: str, subject_name: str, exam_name: str = "") -> str:
