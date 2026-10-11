@@ -156,14 +156,18 @@ def _draw_choice_bubbles(draw: ImageDraw.Draw, br: dict, score_map: Dict[int, di
         if not rec:
             continue
         ans = rec.get("answer")
-        if not ans or ans not in chooses:
+        if not ans:
             continue
-        i = chooses.index(ans)
-        x = (gx + fo_l + i * col_p - inflate_x) * px_per_mm
-        y = (gy + y0 + r * row_p - inflate_y) * px_per_mm
+        # 多选题答案为多字母 (如 "AB"), 逐个画
         color = CHOICE_OK if rec.get("is_correct") else CHOICE_BAD
-        draw.rounded_rectangle([x, y, x + bw_px, y + bh_px], radius=radius,
-                               outline=color, width=lw)
+        for ch in str(ans):
+            if ch not in chooses:
+                continue
+            i = chooses.index(ch)
+            x = (gx + fo_l + i * col_p - inflate_x) * px_per_mm
+            y = (gy + y0 + r * row_p - inflate_y) * px_per_mm
+            draw.rounded_rectangle([x, y, x + bw_px, y + bh_px], radius=radius,
+                                   outline=color, width=lw)
 
 
 def _draw_topic_scores(draw: ImageDraw.Draw, ix_list: list, score_map: Dict[int, dict],
