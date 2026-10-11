@@ -288,12 +288,12 @@ class StudentAccount:
 
         for paper in result["paperList"]:
             ss = SubjectScore(
-                score=paper["userScore"],
+                score=paper.get("userScore"),
                 subject=Subject(
                     id=paper["paperId"],
                     name=paper["subjectName"],
                     code=paper["subjectCode"],
-                    standard_score=paper["standardScore"],
+                    standard_score=paper.get("standardScore"),
                     exam_id=exam.id,
                 ),
             )
@@ -302,10 +302,10 @@ class StudentAccount:
         total = result.get("totalScore")
         if total:
             mark.append(SubjectScore(
-                score=total["userScore"],
+                score=total.get("userScore"),
                 subject=Subject(
                     id="", name=total["subjectName"], code="99",
-                    standard_score=total["standardScore"], exam_id=exam.id,
+                    standard_score=total.get("standardScore"), exam_id=exam.id,
                 ),
             ))
 
@@ -323,13 +323,19 @@ class StudentAccount:
         r.raise_for_status()
         result = r.json()["result"]
         papers = []
-        for p in result["paperList"]:
+        seen = set()
+        for p in (result.get("paperList") or []) + (result.get("absentPaperList") or []):
+            if p["paperId"] in seen:
+                continue
+            seen.add(p["paperId"])
             papers.append({
                 "paper_id": p["paperId"],
                 "subject_name": p["subjectName"],
                 "subject_code": p["subjectCode"],
-                "score": p["userScore"],
-                "standard_score": p["standardScore"],
+                "score": p.get("userScore"),
+                "standard_score": p.get("standardScore"),
+                "status_labels": [label["labelName"] for label in (p.get("subjectLabels") or [])
+                                  if isinstance(label, dict) and isinstance(label.get("labelName"), str)],
             })
         total_raw = result.get("totalScore")
         return papers, total_raw
@@ -394,6 +400,20 @@ class StudentAccount:
             raw_pages.append(img_resp.content)
 
         score_map = build_score_map(payload["sheet_datas"], payload.get("step_datas"))
+        # checksheet 接口在部分考试中不返回总分；按各题 stepRecords 小分回退计算。
+        # 只有确实存在小问得分时才汇总，避免把缺失值误当作 0。
+        step_scores = [
+            (score, full)
+            for item in score_map.values()
+            for score, full in item.get("steps", [])
+            if score is not None
+        ]
+        if payload.get("score") is None and step_scores:
+            payload["score"] = sum(score for score, _ in step_scores)
+        if payload.get("standard_score") is None and step_scores:
+            full_scores = [full for _, full in step_scores if full is not None]
+            if len(full_scores) == len(step_scores):
+                payload["standard_score"] = sum(full_scores)
         pages = (payload["sheet_datas"].get("answerSheetLocationDTO") or {}).get("pageSheets") or []
 
         rendered: list = []

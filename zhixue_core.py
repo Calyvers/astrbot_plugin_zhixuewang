@@ -319,6 +319,7 @@ class ZhiXueManager:
                 continue
             subjects.append({
                 "subject": p["subject_name"],
+                "status_labels": p.get("status_labels") or [],
                 "score": p["score"],
                 "standard_score": p["standard_score"],
                 "class_rank": 0,
@@ -329,12 +330,14 @@ class ZhiXueManager:
         if total_raw:
             total_info = {
                 "name": total_raw.get("subjectName", "总分"),
-                "score": total_raw["userScore"],
-                "standard_score": total_raw["standardScore"],
+                "score": total_raw.get("userScore"),
+                "standard_score": total_raw.get("standardScore"),
             }
 
         if total_info is None and subjects:
-            total = sum(s["score"] for s in subjects if s.get("score") is not None)
+            total = (sum(s["score"] for s in subjects)
+                     if all(s.get("score") is not None and not s.get("status_labels")
+                            for s in subjects) else None)
             total_info = {"name": "总分", "score": total, "standard_score": None}
 
         # Rank info is best-effort (builds Mark internally, catches failures)
@@ -676,14 +679,16 @@ def format_marks_table(user_name: str, exam_name: str, subjects: list, total_inf
     for s in subjects:
         subj = s.get("subject", "?")
         score = s.get("score")
-        score_str = f"{score:.1f}" if score is not None else "-"
-        extra = []
+        score_str = f"{score:.1f}" if score is not None else "暂无分数"
+        extra = list(s.get("status_labels") or [])
         if s.get("class_rank"):
             extra.append(f"班排{s['class_rank']}")
         extra_str = f" ({', '.join(extra)})" if extra else ""
         lines.append(f"  {subj}: {score_str}{extra_str}")
-    if total_info and total_info.get("score") is not None:
-        lines.append(f"  {total_info.get('name', '总分')}: {total_info['score']:.1f}")
+    if total_info:
+        total_score = total_info.get("score")
+        total_text = f"{total_score:.1f}" if total_score is not None else "暂无分数"
+        lines.append(f"  {total_info.get('name', '总分')}: {total_text}")
     return "\n".join(lines)
 
 
