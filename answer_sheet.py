@@ -113,20 +113,22 @@ def build_score_map(sheet_datas: dict, step_datas: list | None = None) -> Dict[i
     return score_map
 
 
-# 选择题选项气泡: firstOption/rowOffset 等字段为 96dpi 像素单位, 相对 branch 区域
-_PX2MM = 25.4 / 96.0
+# 选择题选项气泡: firstOption/rowOffset/colOffset 为 120dpi 像素单位, 相对 branch 区域
+# (由月考英语卡扫描图程序化测距校准: 3/4/7 选项组全部吻合)
+_PX2MM = 25.4 / 120.0
 CHOICE_OK = (26, 188, 156)  # 原版同款青绿 (答对选项)
 CHOICE_BAD = (225, 30, 30)  # 答错选项
 
 
 def _draw_choice_bubbles(draw: ImageDraw.Draw, br: dict, score_map: Dict[int, dict],
                          gx: float, gy: float, gw: float, gh: float, px_per_mm: float):
-    """复刻原版选择题涂色: 学生所涂选项, 答对青绿 / 答错红色.
+    """复刻原版选择题涂色: 学生所涂选项画空心框, 答对青绿 / 答错红色.
 
-    布局模型 (由月考英语卡实测校准):
-      - 每行一题, 行距 = gh/n_rows
-      - firstOption 为第一行首个选项气泡, 96dpi 像素单位, 相对 branch 区域
-      - 选项间距自适应: (gw - fo_left - fo_w) / (n-1), 实测各选项数卡均吻合
+    布局模型 (实测校准):
+      - x = firstOption.left + i * colOffset
+      - y = firstOption.top + (rowOffset - firstOption.height) / 2 + r * rowOffset
+      - 气泡尺寸 = firstOption.width/height, 单位均为 120dpi 像素 (0.2117mm)
+      - 原版为空心框 (框住学生涂的点), 非实心填充
     """
     chooses = br.get("chooses") or []
     fo = br.get("firstOption") or {}
@@ -139,13 +141,16 @@ def _draw_choice_bubbles(draw: ImageDraw.Draw, br: dict, score_map: Dict[int, di
     fo_h = fo.get("height", 0) * _PX2MM
     if fo_w <= 0 or fo_h <= 0:
         return
-    n_opts = len(chooses)
-    pitch_x = (gw - fo_l - fo_w) / (n_opts - 1) if n_opts > 1 else 0.0
-    n_rows = len(ix_list)
-    pitch_y = (gh - fo_t - fo_h) / (n_rows - 1) if n_rows > 1 else 0.0
-    bw_px = max(2, fo_w * px_per_mm)
-    bh_px = max(2, fo_h * px_per_mm)
-    radius = min(bw_px, bh_px) * 0.25
+    col_p = br.get("colOffset", 0) * _PX2MM or fo_w
+    row_p = br.get("rowOffset", 0) * _PX2MM or fo_h
+    y0 = fo_t + (row_p - fo_h) / 2
+    # 外扩一点, 让框圈住印刷的选项括号和学生涂点
+    inflate_x = fo_w * 0.18
+    inflate_y = fo_h * 0.18
+    bw_px = (fo_w + inflate_x * 2) * px_per_mm
+    bh_px = (fo_h + inflate_y * 2) * px_per_mm
+    radius = min(bw_px, bh_px) * 0.22
+    lw = max(2, int(round(fo_h * px_per_mm * 0.16)))
     for r, q in enumerate(ix_list):
         rec = score_map.get(q)
         if not rec:
@@ -154,10 +159,11 @@ def _draw_choice_bubbles(draw: ImageDraw.Draw, br: dict, score_map: Dict[int, di
         if not ans or ans not in chooses:
             continue
         i = chooses.index(ans)
-        x = (gx + fo_l + i * pitch_x) * px_per_mm
-        y = (gy + fo_t + r * pitch_y) * px_per_mm
+        x = (gx + fo_l + i * col_p - inflate_x) * px_per_mm
+        y = (gy + y0 + r * row_p - inflate_y) * px_per_mm
         color = CHOICE_OK if rec.get("is_correct") else CHOICE_BAD
-        draw.rounded_rectangle([x, y, x + bw_px, y + bh_px], radius=radius, fill=color)
+        draw.rounded_rectangle([x, y, x + bw_px, y + bh_px], radius=radius,
+                               outline=color, width=lw)
 
 
 def _draw_topic_scores(draw: ImageDraw.Draw, ix_list: list, score_map: Dict[int, dict],

@@ -152,15 +152,16 @@ class ZhiXuePlugin(Star):
                         new_items = await zhixue_manager.check_new_scores(first_id, config_users)
                         if new_items:
                             for item in new_items:
+                                stu_name = item.get("stu_name") or username
                                 change_type = item.get("change_type", "new_exam")
                                 if change_type == "new_exam":
                                     header = f"[新考试] {item['exam']}"
                                     msg_text = format_marks_table(
-                                        username, item["exam"], item["subjects"]
+                                        stu_name, item["exam"], item["subjects"]
                                     )
                                 else:
                                     header = f"[成绩更新] {item['exam']}"
-                                    lines = [f"【{username}】 {item['exam']}"]
+                                    lines = [f"【{stu_name}】 {item['exam']}"]
                                     for s in item["subjects"]:
                                         subj = s.get("subject", "?")
                                         score = s.get("score")
@@ -198,7 +199,8 @@ class ZhiXuePlugin(Star):
                         new_hws = await zhixue_manager.check_new_homeworks(first_id, config_users)
                         if new_hws:
                             for item in new_hws:
-                                lines = [f"[新作业] {item['name']}", f"【{username}】"]
+                                stu_name = item.get("stu_name") or username
+                                lines = [f"[新作业] {item['name']}", f"【{stu_name}】"]
                                 for subj, score in (item.get("subjects") or {}).items():
                                     score_str = f"{score:.1f}" if score is not None else "-"
                                     lines.append(f"  {subj}: {score_str}")

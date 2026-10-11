@@ -529,7 +529,7 @@ class ZhiXueManager:
                     subjects[p["subject_name"]] = p.get("score")
             except Exception:
                 logger.debug(f"[监听] 获取作业「{h['name']}」成绩失败", exc_info=True)
-            new_items.append({"name": h["name"], "subjects": subjects})
+            new_items.append({"name": h["name"], "subjects": subjects, "stu_name": account.name})
             saved[h["name"]] = subjects
 
         if new_items:
@@ -614,7 +614,8 @@ class ZhiXueManager:
             if exam_name not in saved:
                 # -- 全新考试 --
                 subs = [{"subject": k, "score": v} for k, v in subjects.items()]
-                new_items.append({"exam": exam_name, "subjects": subs, "change_type": "new_exam"})
+                new_items.append({"exam": exam_name, "subjects": subs, "change_type": "new_exam",
+                                  "stu_name": account.name})
                 saved[exam_name] = subjects
             else:
                 # -- 已有考试：逐学科对比 --
@@ -624,7 +625,8 @@ class ZhiXueManager:
                     if subj not in old_subs or old_subs[subj] != score:
                         new_subs.append({"subject": subj, "score": score})
                 if new_subs:
-                    new_items.append({"exam": exam_name, "subjects": new_subs, "change_type": "updated"})
+                    new_items.append({"exam": exam_name, "subjects": new_subs, "change_type": "updated",
+                                      "stu_name": account.name})
                     saved[exam_name] = subjects  # 更新快照
 
         if new_items:
