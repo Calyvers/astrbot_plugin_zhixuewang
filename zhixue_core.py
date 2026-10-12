@@ -7,6 +7,7 @@ import time
 
 from .zhixue_api import login_cookie
 from .zhixue_ranks import get_ranks as query_ranks, valid_rank, parse_ranks_args, format_ranks_table
+from .zhixue_score_fallback import get_fallback_score
 
 logger = logging.getLogger(__name__)
 
@@ -323,9 +324,23 @@ class ZhiXueManager:
                 "status_labels": p.get("status_labels") or [],
                 "score": p["score"],
                 "standard_score": p["standard_score"],
+                "score_estimated": False,
+                "score_source": "报告",
                 "class_rank": 0,
                 "grade_rank": 0,
             })
+            # Report may omit userScore. Fall back only to this exact paper's sheet.
+            if p["score"] is None:
+                try:
+                    fallback = get_fallback_score(account, exam.id, p["paper_id"])
+                except Exception:
+                    logger.debug("答题卡成绩回退失败: paper=%s", p["paper_id"], exc_info=True)
+                    fallback = None
+                if fallback is not None:
+                    subjects[-1]["score"] = fallback.score
+                    subjects[-1]["standard_score"] = fallback.standard_score or p["standard_score"]
+                    subjects[-1]["score_estimated"] = True
+                    subjects[-1]["score_source"] = fallback.source
 
         # Prefer totalScore from API root (more reliable)
         if total_raw:
@@ -338,7 +353,7 @@ class ZhiXueManager:
         if total_info is None and subjects:
             total = (sum(s["score"] for s in subjects)
                      if all(s.get("score") is not None and not s.get("status_labels")
-                            for s in subjects) else None)
+                            and not s.get("score_estimated") for s in subjects) else None)
             total_info = {"name": "总分", "score": total, "standard_score": None}
 
         # Rank info is best-effort (builds Mark internally, catches failures)
@@ -469,6 +484,8 @@ class ZhiXueManager:
                 "subject": p["subject_name"],
                 "score": p["score"],
                 "standard_score": p["standard_score"],
+                "score_estimated": False,
+                "score_source": "报告",
                 "class_rank": 0,
                 "grade_rank": 0,
             })

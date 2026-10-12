@@ -75,7 +75,7 @@ body { font-family:'Courier New',Consolas,'Microsoft YaHei',monospace; backgroun
     <tbody>
       {% for s in subjects %}
       <tr style="border-bottom:1px dashed #ddd;">
-        <td style="padding:6px 4px;">{{ s.subject }}</td>
+        <td style="padding:6px 4px;">{{ s.subject }}{% if s.score_estimated %}<br><small style="color:#666;">估算·{{ s.score_source }}</small>{% endif %}</td>
         <td style="padding:6px 4px; text-align:right; font-weight:bold;">{{ "%.1f"|format(s.score) if s.score is not none else "-" }}</td>
         {% if has_rank %}<td style="padding:6px 4px; text-align:right; color:#666;">{{ s.class_rank if s.class_rank else "-" }}</td>{% endif %}
       </tr>
@@ -347,7 +347,7 @@ class ZhiXuePlugin(Star):
                 has_rank = any(s.get("class_rank") for s in subjects)
                 data = {
                     "student_name": user_name,
-                    "exam_name": ename,
+                    "exam_name": ename + ("（含估算）" if any(s.get("score_estimated") for s in subjects) else ""),
                     "subjects": subjects,
                     "total_info": total_info,
                     "has_rank": has_rank,
@@ -645,6 +645,8 @@ class ZhiXuePlugin(Star):
                 user_id, config_users, exam_param
             )
             ename = exam_name or exam_info.get("name", "最新考试")
+            if any(s.get("score_estimated") for s in subjects):
+                ename += "（含估算）"
             return format_marks_table(user_name, ename, subjects, total_info)
         except ValueError as e:
             return str(e)

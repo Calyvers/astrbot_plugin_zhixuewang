@@ -358,15 +358,23 @@ class StudentAccount:
     def _parse_sheet_result(result: dict) -> dict | None:
         """解析 checksheet/getCheckSheet 的 result 为统一 payload，无答题卡时返回 None."""
         sheet_images_raw = result.get("sheetImages")
-        if not sheet_images_raw:
+        sheet_datas = result.get("sheetDatas") or {}
+        if isinstance(sheet_datas, str):
+            try:
+                sheet_datas = json.loads(sheet_datas)
+            except (ValueError, TypeError):
+                pass
+        image_urls = []
+        if sheet_images_raw:
+            try:
+                image_urls = json.loads(sheet_images_raw) if isinstance(sheet_images_raw, str) else sheet_images_raw
+            except (ValueError, TypeError):
+                image_urls = []
+        # Scores can be present even when the image list is absent.
+        if not image_urls and not sheet_datas and result.get("score") is None:
             return None
-        sheet_datas = {}
-        try:
-            sheet_datas = json.loads(result.get("sheetDatas") or "{}")
-        except (ValueError, TypeError):
-            pass
         return {
-            "image_urls": json.loads(sheet_images_raw),
+            "image_urls": image_urls,
             "sheet_datas": sheet_datas,
             "step_datas": result.get("stepDatas") or [],
             "score": result.get("score"),
