@@ -8,6 +8,7 @@ import time
 from .zhixue_api import login_cookie
 from .zhixue_ranks import get_ranks as query_ranks, valid_rank, parse_ranks_args, format_ranks_table
 from .zhixue_score_fallback import get_fallback_score
+from .zhixue_rate_fallback import parse_trend
 
 logger = logging.getLogger(__name__)
 
@@ -329,16 +330,27 @@ class ZhiXueManager:
                 "class_rank": 0,
                 "grade_rank": 0,
             })
-            # Report may omit userScore. Fall back only to this exact paper's sheet.
+            # Report -> strict trend estimate -> exact answer-sheet fallback.
             if p["score"] is None:
+                fallback = None
                 try:
-                    fallback = get_fallback_score(account, exam.id, p["paper_id"])
+                    trend = account.get_trend_result(exam, p["paper_id"])
+                    if trend is not None:
+                        fallback = parse_trend(
+                            trend, exam_id=exam.id, exam_name=exam.name,
+                            paper_id=p["paper_id"], subject_code=p["subject_code"],
+                            full_score=p["standard_score"] or 0,
+                        )
                 except Exception:
-                    logger.debug("答题卡成绩回退失败: paper=%s", p["paper_id"], exc_info=True)
-                    fallback = None
+                    logger.debug("趋势成绩回退失败: paper=%s", p["paper_id"], exc_info=True)
+                if fallback is None:
+                    try:
+                        fallback = get_fallback_score(account, exam.id, p["paper_id"], p["standard_score"])
+                    except Exception:
+                        logger.debug("答题卡成绩回退失败: paper=%s", p["paper_id"], exc_info=True)
                 if fallback is not None:
-                    subjects[-1]["score"] = fallback.score
-                    subjects[-1]["standard_score"] = fallback.standard_score or p["standard_score"]
+                    subjects[-1]["score"] = float(fallback.rounded_score) if hasattr(fallback, "rounded_score") else fallback.score
+                    subjects[-1]["standard_score"] = float(fallback.full_score) if hasattr(fallback, "full_score") else (fallback.standard_score or p["standard_score"])
                     subjects[-1]["score_estimated"] = True
                     subjects[-1]["score_source"] = fallback.source
 

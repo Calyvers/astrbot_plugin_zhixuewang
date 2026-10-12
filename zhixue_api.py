@@ -381,6 +381,26 @@ class StudentAccount:
             "standard_score": result.get("standardScore"),
         }
 
+    def get_trend_result(self, exam: Exam, paper_id: str) -> dict | None:
+        """Fetch the read-only trend result for one exact exam/paper."""
+        year = exam.academic_year
+        r = self._session.get(
+            _GET_PAPER_LEVEL_TREND_URL,
+            params={
+                "examId": exam.id, "paperId": paper_id,
+                "startSchoolYear": year.begin_time,
+                "endSchoolYear": year.end_time,
+                "pageIndex": 1, "pageSize": 1,
+            },
+            headers=self._get_auth_header(), timeout=20,
+        )
+        r.raise_for_status()
+        payload = r.json()
+        if payload.get("errorCode") != 0:
+            return None
+        result = payload.get("result")
+        return result if isinstance(result, dict) else None
+
     def get_sheet_payload(self, exam_id: str, paper_id: str) -> dict | None:
         """获取答题卡完整数据: 图片 URL + 定位数据 + 分步满分. 无答题卡时返回 None."""
         r = self._session.get(
