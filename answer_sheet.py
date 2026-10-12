@@ -106,12 +106,133 @@ def build_score_map(sheet_datas: dict, step_datas: list | None = None) -> Dict[i
                 "score": d.get("score", 0.0),
                 "standard_score": d.get("standardScore", 0.0),
                 "is_correct": d.get("isCorrect", False),
+                "answer": d.get("answer"),  # 选择题学生所选选项, 如 "C"
                 "steps": [(s, f) for _, s, f in steps],
                 "spot_marks": spot_marks,
             }
         except (ValueError, KeyError, TypeError):
             continue
     return score_map
+
+
+# 选择题选项气泡: firstOption/rowOffset/colOffset 为设计像素单位, 相对 branch 区域.
+# 实测校准 (月考英语卡, 跨行笔画计数法测印刷括号):
+#   X: 括号 [ 位于 fo.left*u_x + i*colOffset*u_x, u_x = 0.1953mm/px
+#      (fo.width*u_x=3.71mm == 实测括号宽 3.65mm, colOffset*u_x=6.25mm == 实测列距)
+#   Y: 行 top = fo.top*u_y + r*rowOffset*u_y, u_y = 0.2117mm/px (120dpi)
+#      (rowOffset*u_y=5.08mm == 实测行距 ~5.0mm; firstOption.top 即首行气泡顶部)
+_PX2MM_X = 25.4 / 130.0
+_PX2MM_Y = 25.4 / 120.0
+CHOICE_OK = (26, 188, 156)  # 原版同款青绿 (答对选项)
+CHOICE_BAD = (225, 30, 30)  # 答错选项
+
+
+def _draw_choice_bubbles(draw: ImageDraw.Draw, br: dict, score_map: Dict[int, dict],
+                         gx: float, gy: float, gw: float, gh: float, px_per_mm: float):
+    """复刻原版选择题涂色: 学生所涂选项画空心框, 答对青绿 / 答错红色.
+
+    布局模型 (实测校准, 见上方注释): 原版为空心框 (框住学生涂点), 非实心填充.
+    """
+    chooses = br.get("chooses") or []
+    fo = br.get("firstOption") or {}
+    ix_list = br.get("ixList") or []
+    if not chooses or not fo or not ix_list:
+        return
+    fo_l = fo.get("left", 0) * _PX2MM_X
+    fo_t = fo.get("top", 0) * _PX2MM_Y
+    fo_w = fo.get("width", 0) * _PX2MM_X
+    fo_h = fo.get("height", 0) * _PX2MM_Y
+    if fo_w <= 0 or fo_h <= 0:
+        return
+    col_p = br.get("colOffset", 0) * _PX2MM_X or fo_w
+    row_p = br.get("rowOffset", 0) * _PX2MM_Y or fo_h
+    # 外扩一点, 让框圈住印刷的选项括号和学生涂点
+    inflate_x = fo_w * 0.15
+    inflate_y = fo_h * 0.12
+    bw_px = (fo_w + inflate_x * 2) * px_per_mm
+    bh_px = (fo_h + inflate_y * 2) * px_per_mm
+    radius = min(bw_px, bh_px) * 0.22
+    lw = max(2, int(round(fo_h * px_per_mm * 0.16)))
+    for r, q in enumerate(ix_list):
+        rec = score_map.get(q)
+        if not rec:
+            continue
+        ans = rec.get("answer")
+        if not ans:
+            continue
+        # 多选题答案为多字母 (如 "AB"), 逐个画
+        color = CHOICE_OK if rec.get("is_correct") else CHOICE_BAD
+        for ch in str(ans):
+            if ch not in chooses:
+                continue
+            i = chooses.index(ch)
+            x = (gx + fo_l + i * col_p - inflate_x) * px_per_mm
+            y = (gy + fo_t + r * row_p - inflate_y) * px_per_mm
+            draw.rounded_rectangle([x, y, x + bw_px, y + bh_px], radius=radius,
+                                   outline=color, width=lw)
+
+
+def _draw_score_table(draw: ImageDraw.Draw, ix_list: list, score_map: Dict[int, dict],
+                      x1: float, y1: float, x2: float, y2: float, fsize: int):
+    """解答区域多题号时, 复刻原版网页端把每小题得分堆叠在裁切块右上角
+    (原版 accountStepScoreStyle: 右上角纵向堆叠, 超过 6 条分两列),
+    不在横线上画, 避免压住学生手写答案.
+
+    格式: "21: -4/6" 黑色题号 + 红/绿分数 (扣完画红, 满分画绿).
+    """
+    recs = [(q, score_map[q]) for q in ix_list if q in score_map]
+    if len(recs) < 2:
+        return
+    fs = max(12, int(fsize * 0.62))
+    line_h = int(fs * 1.4)
+    n = len(recs)
+    two_col = n > 6
+    rows = (n + 1) // 2 if two_col else n
+    # 表格高度超过块高时缩小字号
+    while rows * line_h > (y2 - y1) * 0.96 and fs > 12:
+        fs = max(12, int(fs * 0.85))
+        line_h = int(fs * 1.4)
+    font = _load_font(fs, bold=True)
+    entries = []
+    for q, r in recs:
+        score = r.get("score", 0.0)
+        full = r.get("standard_score") or 0
+        wrong = bool(full) and score < full
+        num = f"{score:g}/{full:g}" if full else f"{score:g}"
+        entries.append((f"{q}:", num, wrong))
+
+    def col_widths(idxs):
+        wl = wn = 0
+        for i in idxs:
+            label, num, _wrong = entries[i]
+            wl = max(wl, draw.textbbox((0, 0), label, font=font)[2])
+            wn = max(wn, draw.textbbox((0, 0), num, font=font)[2])
+        return wl, wn
+
+    gap = int(fs * 0.6)
+    if two_col:
+        w0l, w0n = col_widths(range(0, n, 2))
+        w1l, w1n = col_widths(range(1, n, 2))
+        table_w = w0l + w0n + gap + w1l + w1n
+    else:
+        w0l, w0n = col_widths(range(n))
+        table_w = w0l + w0n
+    pad = int(fs * 0.4)
+    # 右上角 (块内)
+    tx = max(x1, x2 - pad - table_w)
+    ty = y1 + pad
+    for idx, (label, num, wrong) in enumerate(entries):
+        if two_col:
+            row, col = idx // 2, idx % 2
+            x = tx if col == 0 else tx + w0l + w0n + gap
+        else:
+            row, x = idx, tx
+        y = ty + row * line_h
+        if y + line_h > y2:
+            break
+        draw.text((x, y), label, fill=(70, 70, 70), font=font)
+        draw.text((x + draw.textbbox((0, 0), label, font=font)[2], y), num,
+                  fill=RED if wrong else GREEN, font=font)
 
 
 def _draw_label(draw: ImageDraw.Draw, text: str, x: float, y: float, color, fsize: int,
@@ -301,12 +422,18 @@ def annotate_page(img: Image.Image, page: dict, score_map: Dict[int, dict]) -> N
             seen_boxes.add(box_key)
             if x2 - x1 < 20 or y2 - y1 < 20:
                 continue
+            # 选择题涂色 (原版同款): 答对青绿/答错红 (仅毫米模板, 百分比卡无实测数据不画)
+            if not use_percent and br.get("chooses") and br.get("firstOption"):
+                _draw_choice_bubbles(draw, br, score_map, ax, ay, bw, bh, px_per_mm)
             got = sum(r["score"] for _, r in recs)
             full = sum(r["standard_score"] for _, r in recs)
             wrong = [i for i, r in recs if r["score"] < r["standard_score"]]
             color = RED if wrong else GREEN
             if wrong:
                 draw.rectangle([x1, y1, x2, y2], outline=color, width=max(3, fsize // 8))
+            # 多题号解答区域: 每小题得分堆叠在块右上角 (原版网页同款, 不压答案)
+            if len(ix_list) >= 2 and not br.get("chooses"):
+                _draw_score_table(draw, ix_list, score_map, x1, y1, x2, y2, fsize)
             start = f"{ix_list[0]}题" if len(recs) == 1 else f"{ix_list[0]}-{ix_list[-1]}题"
             deduct = full - got
             label = f"{start} {got:g}/{full:g}" + (f"  -{deduct:g}" if wrong else "")
