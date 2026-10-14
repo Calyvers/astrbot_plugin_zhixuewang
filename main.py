@@ -344,7 +344,7 @@ class ZhiXuePlugin(Star):
             user_name, exam_info, subjects, total_info = await zhixue_manager.get_marks(
                 event.get_sender_id(), config_users, exam_param
             )
-            ename = exam_param or exam_info.get("name", "最新")
+            ename = str(exam_param) if exam_param is not None else str(exam_info.get("name", "最新"))
             try:
                 has_rank = any(s.get("class_rank") for s in subjects)
                 data = {
