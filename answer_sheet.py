@@ -58,7 +58,11 @@ def _load_font(size: int, bold: bool = False):
 
 
 def build_score_map(sheet_datas: dict, step_datas: list | None = None) -> Dict[int, dict]:
-    """题号 -> {score, standard_score, is_correct, steps, spot_marks}.
+    """内部题号(topicNumber) -> {score, standard_score, disp_title, is_correct, steps, spot_marks}.
+
+    题号语义与原版网页一致 (OriginalRollDetail.vue: answerRecordDetails[num-1]):
+    branch.ixList 存的是内部题号 topicNumber, 显示题号是记录里的 dispTitle,
+    两者可能不同 (语文等科目内部号按题型排序, 与卷面题号错位), 不可混用.
 
     steps: [(得分, 满分或None)], 满分来自 result.stepDatas[].stepStandardScore
            (按 topicStartNum 题号 + stepNum 匹配); 有满分即可算扣分.
@@ -75,11 +79,11 @@ def build_score_map(sheet_datas: dict, step_datas: list | None = None) -> Dict[i
 
     details = (sheet_datas.get("userAnswerRecordDTO") or {}).get("answerRecordDetails") or []
     score_map: Dict[int, dict] = {}
-    for d in details:
+    for idx, d in enumerate(details):
         try:
             steps: List[Tuple[int, float, float | None]] = []
             spot_marks: List[dict] = []
-            topic = int(d["dispTitle"])
+            topic = int(d.get("topicNumber") or idx + 1)
             for sub in d.get("subTopics") or []:
                 if not sub:
                     continue
@@ -107,6 +111,7 @@ def build_score_map(sheet_datas: dict, step_datas: list | None = None) -> Dict[i
                 "standard_score": d.get("standardScore", 0.0),
                 "is_correct": d.get("isCorrect", False),
                 "answer": d.get("answer"),  # 选择题学生所选选项, 如 "C"
+                "disp_title": str(d.get("dispTitle") or topic),  # 卷面显示题号
                 "steps": [(s, f) for _, s, f in steps],
                 "spot_marks": spot_marks,
             }
@@ -199,7 +204,8 @@ def _draw_score_table(draw: ImageDraw.Draw, ix_list: list, score_map: Dict[int, 
         full = r.get("standard_score") or 0
         wrong = bool(full) and score < full
         num = f"{score:g}/{full:g}" if full else f"{score:g}"
-        entries.append((f"{q}:", num, wrong))
+        # 显示卷面题号 (dispTitle), 非 ixList 内部号
+        entries.append((f"{r.get('disp_title') or q}:", num, wrong))
 
     def col_widths(idxs):
         wl = wn = 0
@@ -270,7 +276,7 @@ def _resolve_branch_mm(sec_pos: dict, br_pos: dict) -> Tuple[float, float]:
     return rx, ry
 
 
-def _draw_sub_scores(draw: ImageDraw.Draw, title: int, steps: List[Tuple[float, float | None]],
+def _draw_sub_scores(draw: ImageDraw.Draw, title: str, steps: List[Tuple[float, float | None]],
                      x: float, y: float, fsize: int) -> float:
     """分小问扣分, 网页同款两列布局: 16(1): -0  16(2): -3/3 (黑色题号+红色扣分).
 
@@ -434,7 +440,17 @@ def annotate_page(img: Image.Image, page: dict, score_map: Dict[int, dict]) -> N
             # 多题号解答区域: 每小题得分堆叠在块右上角 (原版网页同款, 不压答案)
             if len(ix_list) >= 2 and not br.get("chooses"):
                 _draw_score_table(draw, ix_list, score_map, x1, y1, x2, y2, fsize)
-            start = f"{ix_list[0]}题" if len(recs) == 1 else f"{ix_list[0]}-{ix_list[-1]}题"
+            # 显示卷面题号 (dispTitle), 非 ixList 内部号; 多题连续用区间, 不连续逐个列出
+            dts = [str(r.get("disp_title") or q) for q, r in recs]
+            if len(dts) == 1:
+                start = f"{dts[0]}题"
+            else:
+                nums = [int(t) for t in dts if t.isdigit()]
+                if len(nums) == len(dts) and max(nums) - min(nums) + 1 == len(nums):
+                    start = f"{min(nums)}-{max(nums)}题"
+                else:
+                    shown = "、".join(dts[:4])
+                    start = f"{shown}题" + ("等" if len(dts) > 4 else "")
             deduct = full - got
             label = f"{start} {got:g}/{full:g}" + (f"  -{deduct:g}" if wrong else "")
             label_h = _draw_label(draw, label, x1, max(0, y1 - fsize * 1.6), color, fsize,
@@ -444,7 +460,8 @@ def annotate_page(img: Image.Image, page: dict, score_map: Dict[int, dict]) -> N
             if sub_y + fsize * 1.3 < y2 or y1 - fsize * 1.6 < 0:
                 for i, r in recs:
                     if r.get("steps"):
-                        used = _draw_sub_scores(draw, i, r["steps"], x1, max(sub_y, 4), int(fsize * 0.8))
+                        used = _draw_sub_scores(draw, str(r.get("disp_title") or i), r["steps"],
+                                                x1, max(sub_y, 4), int(fsize * 0.8))
                         sub_y += used + 4
             # 逐点批注 (spotMark, 老师在图上的 +N/-N 标注)
             for _, r in recs:
