@@ -57,6 +57,16 @@ def _load_font(size: int, bold: bool = False):
     return ImageFont.load_default()
 
 
+def _optional_number(value):
+    """Preserve missing numeric fields as None; keep explicit numeric zero."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
 def build_score_map(sheet_datas: dict, step_datas: list | None = None) -> Dict[int, dict]:
     """内部题号(topicNumber) -> {score, standard_score, disp_title, is_correct, steps, spot_marks}.
 
@@ -73,7 +83,7 @@ def build_score_map(sheet_datas: dict, step_datas: list | None = None) -> Dict[i
         try:
             t = int(sd.get("topicStartNum", 0))
             n = int(sd.get("stepNum", 0))
-            step_full.setdefault(t, {})[n] = sd.get("stepStandardScore", 0.0)
+            step_full.setdefault(t, {})[n] = _optional_number(sd.get("stepStandardScore"))
         except (ValueError, TypeError, AttributeError):
             continue
 
@@ -90,7 +100,7 @@ def build_score_map(sheet_datas: dict, step_datas: list | None = None) -> Dict[i
                 for st in sub.get("stepRecords") or []:
                     if st:
                         n = int(st.get("stepNum", 0))
-                        sc = st.get("score", 0.0)
+                        sc = _optional_number(st.get("score"))
                         steps.append((n, sc, step_full.get(topic, {}).get(n)))
                 for m in sub.get("teacherMarkingRecords") or []:
                     mc = m.get("markingContent")
@@ -107,8 +117,8 @@ def build_score_map(sheet_datas: dict, step_datas: list | None = None) -> Dict[i
                         continue
             steps.sort()
             score_map[topic] = {
-                "score": d.get("score", 0.0),
-                "standard_score": d.get("standardScore", 0.0),
+                "score": _optional_number(d.get("score")),
+                "standard_score": _optional_number(d.get("standardScore")),
                 "is_correct": d.get("isCorrect", False),
                 "answer": d.get("answer"),  # 选择题学生所选选项, 如 "C"
                 "disp_title": str(d.get("dispTitle") or topic),  # 卷面显示题号
@@ -200,10 +210,15 @@ def _draw_score_table(draw: ImageDraw.Draw, ix_list: list, score_map: Dict[int, 
     font = _load_font(fs, bold=True)
     entries = []
     for q, r in recs:
-        score = r.get("score", 0.0)
-        full = r.get("standard_score") or 0
-        wrong = bool(full) and score < full
-        num = f"{score:g}/{full:g}" if full else f"{score:g}"
+        score = r.get("score")
+        full = r.get("standard_score")
+        try:
+            wrong = score is not None and full is not None and float(score) < float(full)
+        except (TypeError, ValueError):
+            wrong = False
+        score_text = f"{float(score):g}" if score is not None else "—"
+        full_text = f"{float(full):g}" if full is not None else None
+        num = f"{score_text}/{full_text}" if full_text is not None else score_text
         # 显示卷面题号 (dispTitle), 非 ixList 内部号
         entries.append((f"{r.get('disp_title') or q}:", num, wrong))
 
@@ -431,9 +446,13 @@ def annotate_page(img: Image.Image, page: dict, score_map: Dict[int, dict]) -> N
             # 选择题涂色 (原版同款): 答对青绿/答错红 (仅毫米模板, 百分比卡无实测数据不画)
             if not use_percent and br.get("chooses") and br.get("firstOption"):
                 _draw_choice_bubbles(draw, br, score_map, ax, ay, bw, bh, px_per_mm)
-            got = sum(r["score"] for _, r in recs)
-            full = sum(r["standard_score"] for _, r in recs)
-            wrong = [i for i, r in recs if r["score"] < r["standard_score"]]
+            valid_recs = [(i, r) for i, r in recs
+                          if r.get("score") is not None and r.get("standard_score") is not None]
+            if not valid_recs:
+                continue
+            got = sum(float(r["score"]) for _, r in valid_recs)
+            full = sum(float(r["standard_score"]) for _, r in valid_recs)
+            wrong = [i for i, r in valid_recs if float(r["score"]) < float(r["standard_score"])]
             color = RED if wrong else GREEN
             if wrong:
                 draw.rectangle([x1, y1, x2, y2], outline=color, width=max(3, fsize // 8))

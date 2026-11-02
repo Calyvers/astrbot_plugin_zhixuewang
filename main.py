@@ -19,6 +19,7 @@ from .zhixue_core import (
     format_homeworks_table,
 )
 from .zhixue_ranks import format_ranks_table, parse_ranks_args
+from .zhixue_topic_scores import format_topic_scores_text, parse_score_args
 
 # ---------------------------------------------------------------------------
 # HTML templates — black/white minimalist pixel style
@@ -89,6 +90,56 @@ body { font-family:'Courier New',Consolas,'Microsoft YaHei',monospace; backgroun
   </div>
   {% endif %}
 </div></body></html>'''
+
+
+TOPIC_SCORES_TMPL = '''<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Courier New',Consolas,'Microsoft YaHei',monospace; background:#fff; width:480px; padding:20px; color:#000; }
+.header { font-size:16px; font-weight:bold; border-bottom:2px solid #000; padding-bottom:8px; letter-spacing:1px; }
+.meta { font-size:12px; color:#666; margin-top:4px; margin-bottom:14px; }
+.subject { margin-bottom:16px; }
+.subject-head { display:flex; justify-content:space-between; align-items:baseline; border-bottom:1px solid #000; padding-bottom:3px; margin-bottom:5px; }
+.subject-name { font-size:14px; font-weight:bold; letter-spacing:1px; }
+.subject-total { font-size:13px; font-weight:bold; }
+.subject-total small { font-size:10px; color:#777; font-weight:normal; }
+table { width:100%; border-collapse:collapse; table-layout:fixed; }
+td { border:1px solid #ececec; text-align:center; padding:2px 0; vertical-align:middle; }
+td.empty { border-color:transparent; }
+.qno { font-size:10px; color:#777; line-height:1.6; }
+.qsc { font-size:13px; font-weight:bold; line-height:1.5; }
+.qsc small { font-size:8px; color:#aaa; font-weight:normal; }
+.loss { color:#c00; }
+.row-gap { height:5px; }
+.na { font-size:11px; color:#999; padding:3px 0; }
+.footer { margin-top:10px; border-top:1px solid #000; padding-top:6px; font-size:10px; color:#999; line-height:1.7; }
+</style></head>
+<body>
+  <div class="header">{{ student_name }}</div>
+  <div class="meta">{{ exam_name }}</div>
+  {% for s in subjects %}
+  <div class="subject">
+    <div class="subject-head">
+      <span class="subject-name">{{ s.subject }}</span>
+      <span class="subject-total">{{ s.score }}{% if s.standard_score not in ['—', None, ''] %}<small> / {{ s.standard_score }}</small>{% endif %}</span>
+    </div>
+    {% if s.available %}
+      {% for row in s.rows %}
+      <table><tr>
+        {% for c in row %}
+        <td{% if c.empty %} class="empty"{% endif %}>{% if not c.empty %}<div class="qno">{{ c.no }}</div><div class="qsc {{ 'loss' if c.lost else '' }}">{{ c.score }}<small>/{{ c.full }}</small></div>{% endif %}</td>
+        {% endfor %}
+      </tr></table>
+      {% if not loop.last %}<div class="row-gap"></div>{% endif %}
+      {% endfor %}
+    {% else %}
+      <div class="na">{% if s.note %}{{ s.note }}，{% endif %}暂无小分数据</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  <div class="footer">红色 = 未得满分　灰色 = 该题满分<br>&gt; /zx score -s &lt;学科&gt; 只看单科</div>
+</body></html>'''
 
 
 class ZhiXuePlugin(Star):
@@ -252,6 +303,7 @@ class ZhiXuePlugin(Star):
             "  /zx marks [序号/名称] - 查看成绩\n"
             "  /zx ranks [all] [序号/名称] - 查看排名，all 显示当次全部科目\n"
             "  /zx sheet <学科> [考试] - 查看答题卡(带批改标注长图)\n"
+            "  /zx score [-s 学科] [考试] - 逐题得分表(图片，自动换行)\n"
             "  /zx hw list [all]    - 查看手阅作业列表，all 查看全部\n"
             "  /zx hw marks [序号/名称] - 查看作业成绩\n"
             "  /zx hw sheet <学科> [作业] - 查看作业答题卡(带批改标注长图)\n"
@@ -411,6 +463,45 @@ class ZhiXuePlugin(Star):
             yield event.plain_result(str(e))
         except Exception as e:
             yield event.plain_result(f"查询答题卡失败: {e}")
+
+    @zx.command("score")
+    async def zx_score(self, event: AstrMessageEvent, query: GreedyStr):
+        '''查看逐题得分(小分)表，-s 学科 只看单科'''
+        try:
+            subject_name, exam_param = parse_score_args(query)
+        except ValueError as e:
+            yield event.plain_result(str(e))
+            return
+        yield event.plain_result("正在查询逐题得分...")
+        try:
+            config_users = self.config.get("users", [])
+            user_name, exam_info, subjects = await zhixue_manager.get_topic_scores(
+                event.get_sender_id(), config_users, exam_param, subject_name
+            )
+            has_report_score = any(
+                s.get("score") not in (None, "—", "")
+                or s.get("standard_score") not in (None, "—", "")
+                for s in subjects
+            )
+            if not any(s["available"] for s in subjects) and not has_report_score:
+                yield event.plain_result("该考试暂无答题卡小分数据（可能未批改或未发布）")
+                return
+            try:
+                url = await self._render_image(TOPIC_SCORES_TMPL, {
+                    "student_name": user_name,
+                    "exam_name": exam_info.get("name", ""),
+                    "subjects": subjects,
+                })
+                yield event.image_result(url)
+            except Exception as t2i_err:
+                logger.warning(f"小分表渲染失败，降级纯文本: {t2i_err}")
+                yield event.plain_result(
+                    format_topic_scores_text(user_name, exam_info.get("name", ""), subjects)
+                )
+        except ValueError as e:
+            yield event.plain_result(str(e))
+        except Exception as e:
+            yield event.plain_result(f"查询逐题得分失败: {e}")
 
     # -------------------------------------------------------------------
     # sub command group: /zx hw — 手阅作业（zxbReport 接口）

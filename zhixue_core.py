@@ -427,6 +427,20 @@ class ZhiXueManager:
             raise ValueError(f"「{sheet_name}」答题卡图片暂未上传")
         return sheet_name, temp_paths
 
+    async def get_topic_scores(self, user_id: str, config_users: list,
+                               exam_param: str = None,
+                               subject_name: str = None) -> tuple:
+        """逐题得分（小分）表数据。返回 (student_name, exam_info, subjects)。"""
+        from .zhixue_topic_scores import DEFAULT_PER_ROW, collect_topic_scores
+
+        account, _ = await self.get_account(user_id, config_users)
+        exam = self._resolve_exam_or_latest(account, exam_param)
+        papers, _ = account.get_report_main(exam)
+        subjects = await asyncio.to_thread(
+            collect_topic_scores, account, exam, papers, DEFAULT_PER_ROW, subject_name
+        )
+        return account.name, {"name": exam.name, "id": exam.id}, subjects
+
     # ------------------------------------------------------------------
     # 手阅作业（zxbReport 接口，网页版无入口）
     # ------------------------------------------------------------------
