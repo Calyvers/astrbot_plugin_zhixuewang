@@ -466,7 +466,7 @@ class ZhiXuePlugin(Star):
 
     @zx.command("score")
     async def zx_score(self, event: AstrMessageEvent, query: GreedyStr):
-        '''查看逐题得分(小分)表，-s 学科 只看单科'''
+        '''查看逐题得分(小分)表。-s 学科 只看单科；末尾加序号(仅本学年)或考试名切换考试'''
         try:
             subject_name, exam_param = parse_score_args(query)
         except ValueError as e:
